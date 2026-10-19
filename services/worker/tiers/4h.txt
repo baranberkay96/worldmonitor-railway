@@ -1,0 +1,12 @@
+# seed-4h: every 4 hours. Data cached for 6-36 hours.
+supply-chain-trade
+sanctions-pressure
+forecasts
+fx-rates
+fx-yoy
+fear-greed
+hormuz
+energy-intelligence
+earnings-calendar
+economic-calendar
+webcams

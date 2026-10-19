@@ -1,0 +1,12 @@
+# seed-live: every 10 minutes. Fast-moving feeds (upstream production runs
+# these every 5-15 minutes). Names are scripts/seed-<name>.mjs at v2.11.1.
+earthquakes
+gdelt-bulk-materializer
+conflict-intel
+military-flights
+military-cii
+commodity-quotes
+radiation-watch
+imd-cyclone-marine
+fire-detections
+economy

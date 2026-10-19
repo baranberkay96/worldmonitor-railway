@@ -1,0 +1,21 @@
+# seed-bundles: every 15 minutes. Upstream's seed bundles; each one checks
+# Redis freshness per section and only runs the sections that are due, so most
+# ticks are short. The start position rotates every tick so no bundle starves.
+bundle-derived-signals
+bundle-market-backup
+bundle-canada
+bundle-climate
+bundle-portwatch
+bundle-portwatch-port-activity
+bundle-relay-backup
+bundle-energy-sources
+bundle-health
+bundle-ecb-eu
+bundle-imf-extended
+bundle-macro
+bundle-yield-curves
+bundle-resilience
+bundle-resilience-energy-v2
+bundle-resilience-recovery
+bundle-static-ref
+bundle-static-ref-heavy

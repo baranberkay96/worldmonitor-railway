@@ -1,0 +1,17 @@
+# seed-daily: once a day. Slow datasets (cached for days to weeks), plus the
+# regional bundle (6-hourly snapshots and the weekly LLM brief, self-gated).
+aaii-sentiment
+cot
+market-breadth
+trade-flows
+comtrade-bilateral-hs4
+hs2-chokepoint-exposure
+energy-spine
+electricity-prices
+ember-electricity
+fuel-prices
+bigmac
+grocery-basket
+forecast-bets
+forecast-resolutions
+bundle-regional

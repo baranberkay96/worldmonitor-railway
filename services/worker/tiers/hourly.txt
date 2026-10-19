@@ -1,0 +1,12 @@
+# seed-hourly: every hour. Feeds whose cached data lives 3-6 hours.
+unrest-events
+thermal-escalation
+prediction-markets
+research
+security-advisories
+regulatory-actions
+cyber-threats
+aviation
+internet-outages
+fred-rates
+insights

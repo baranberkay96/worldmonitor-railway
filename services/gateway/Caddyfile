@@ -1,0 +1,56 @@
+# World Monitor gateway for Railway (community template).
+#
+# The only public service. It puts an HTTP basic-auth login in front of the
+# whole dashboard and API, because anonymous visitors could otherwise trigger
+# LLM briefs and keyed data calls (Finnhub, FRED, AIS, ...) on the operator's
+# keys. /api/mcp skips the login prompt: upstream already refuses every MCP
+# request that lacks a valid X-WorldMonitor-Key (WORLDMONITOR_VALID_KEYS), and
+# MCP clients cannot answer a basic-auth challenge.
+#
+# The login block comes from /tmp/wm-gateway/auth.caddy, written at start by
+# entrypoint.sh (basic_auth with a bcrypt hash, or nothing when
+# WM_PUBLIC_DASHBOARD=true).
+
+{
+	admin off
+	auto_https off
+	servers {
+		# Railway's edge reaches the service from private address space. Trust
+		# its X-Forwarded-For, read right to left, so the app's per-IP limits
+		# (for example the 50 LLM briefs per day per client) see real clients.
+		trusted_proxies static private_ranges 100.64.0.0/10
+		trusted_proxies_strict
+		client_ip_headers X-Forwarded-For
+	}
+}
+
+(to_app) {
+	reverse_proxy {$WM_APP_UPSTREAM} {
+		# One trustworthy client address for the app's nginx real-IP module.
+		header_up X-Forwarded-For {client_ip}
+		flush_interval -1
+		lb_try_duration 15s
+	}
+}
+
+:{$PORT:8080} {
+	# Railway healthcheck for the gateway itself.
+	handle /gateway-health {
+		respond "ok" 200
+	}
+
+	# MCP endpoint: authenticated by upstream with X-WorldMonitor-Key.
+	@mcp path /api/mcp /api/mcp/*
+	handle @mcp {
+		import to_app
+	}
+
+	# Everything else: dashboard, API and assets behind the login.
+	handle {
+		import /tmp/wm-gateway/auth.caddy
+		# The browser repeats the basic-auth credential on every request; the
+		# app never needs it.
+		request_header -Authorization
+		import to_app
+	}
+}

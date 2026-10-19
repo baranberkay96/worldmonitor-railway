@@ -1,0 +1,1219 @@
+{
+ "name": "World Monitor v2 Global Intelligence Dashboard",
+ "description": "Real-time news, conflict and market signals on one AI-powered map.",
+ "category": "Analytics",
+ "tags": [
+  "worldmonitor",
+  "osint",
+  "geopolitics",
+  "dashboard",
+  "news",
+  "maps",
+  "markets",
+  "intelligence",
+  "mcp"
+ ],
+ "image": "https://cdn.jsdelivr.net/gh/koala73/worldmonitor@v2.11.1/public/favico/android-chrome-512x512.png",
+ "upstream": {
+  "repo": "koala73/worldmonitor",
+  "version": "v2.11.1 (released 2026-10-19, commit 39e0252)",
+  "license": "AGPL-3.0",
+  "checked": "2026-10-20"
+ },
+ "services": {
+  "gateway": {
+   "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/caddy.svg",
+   "source": {
+    "repo": "baranberkay96/worldmonitor-railway",
+    "rootDirectory": "/services/gateway"
+   },
+   "startCommand": null,
+   "preDeployCommand": null,
+   "healthcheckPath": "/gateway-health",
+   "healthcheckTimeout": 120,
+   "restartPolicyType": "ON_FAILURE",
+   "restartPolicyMaxRetries": 10,
+   "numReplicas": 1,
+   "cronSchedule": null,
+   "publicDomain": true,
+   "targetPort": 8080,
+   "tcpProxy": null,
+   "volume": null,
+   "variables": {
+    "PORT": {
+     "defaultValue": "8080",
+     "description": "Port Caddy listens on; the public domain and Railway's healthcheck use it.",
+     "required": false
+    },
+    "WM_APP_UPSTREAM": {
+     "defaultValue": "${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "Private host:port of the worldmonitor service (nginx).",
+     "required": false
+    },
+    "WM_UI_USERNAME": {
+     "defaultValue": "admin",
+     "description": "Login name for the dashboard (HTTP basic auth). Letters, digits and . _ @ - only.",
+     "required": false
+    },
+    "WM_UI_PASSWORD": {
+     "defaultValue": "${{secret(24, \"abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789\")}}",
+     "description": "Dashboard password, generated at deploy (at least 12 characters). Change it here and redeploy the gateway.",
+     "required": false
+    },
+    "WM_PUBLIC_DASHBOARD": {
+     "defaultValue": "false",
+     "description": "true removes the login. Only do this if you accept that anyone with the URL can trigger LLM briefs and keyed API calls on your keys.",
+     "required": false
+    }
+   }
+  },
+  "worldmonitor": {
+   "icon": "https://cdn.jsdelivr.net/gh/koala73/worldmonitor@v2.11.1/public/favico/android-chrome-512x512.png",
+   "source": {
+    "repo": "baranberkay96/worldmonitor-railway",
+    "rootDirectory": "/services/worldmonitor"
+   },
+   "startCommand": null,
+   "preDeployCommand": null,
+   "healthcheckPath": "/api/sidecar-health",
+   "healthcheckTimeout": 300,
+   "restartPolicyType": "ALWAYS",
+   "numReplicas": 1,
+   "cronSchedule": null,
+   "publicDomain": false,
+   "targetPort": null,
+   "tcpProxy": null,
+   "volume": null,
+   "variables": {
+    "PORT": {
+     "defaultValue": "8080",
+     "description": "nginx port inside the image (hardcoded upstream). Railway health-checks PORT, so keep 8080.",
+     "required": false
+    },
+    "VITE_VARIANT": {
+     "defaultValue": "full",
+     "description": "Dashboard variant baked in at build time: full, tech, finance, commodity, happy or energy. Changing it rebuilds the service.",
+     "required": false
+    },
+    "WM_SESSION_SECRET": {
+     "defaultValue": "${{secret(64, \"abcdef0123456789\")}}",
+     "description": "Signs the anonymous browser session (wms_). Required, at least 32 characters; generated at deploy.",
+     "required": false
+    },
+    "WORLDMONITOR_VALID_KEYS": {
+     "defaultValue": "wm_${{secret(40, \"abcdef0123456789\")}}",
+     "description": "Operator API key(s), comma separated, for X-WorldMonitor-Key: REST API, detailed /api/health and the MCP server at /api/mcp. One key is generated at deploy.",
+     "required": false
+    },
+    "WORLDMONITOR_RELAY_KEY": {
+     "defaultValue": "${{secret(64, \"abcdef0123456789\")}}",
+     "description": "Dedicated relay/seeder secret for cache warm-pings and the news digest read (upstream #7437). Generated; ais-relay and the seed services reference it.",
+     "required": false
+    },
+    "WORLDMONITOR_SEED_REFRESH_KEY": {
+     "defaultValue": "${{secret(64, \"abcdef0123456789\")}}",
+     "description": "Secret that lets seed-bundles force the resilience ranking recompute. Generated; seed-bundles references it.",
+     "required": false
+    },
+    "UPSTASH_REDIS_REST_URL": {
+     "defaultValue": "http://${{redis-rest.RAILWAY_PRIVATE_DOMAIN}}:${{redis-rest.PORT}}",
+     "description": "Upstash-compatible REST endpoint of redis-rest over the private network (World Monitor never speaks raw Redis).",
+     "required": false
+    },
+    "UPSTASH_REDIS_REST_TOKEN": {
+     "defaultValue": "${{redis-rest.SRH_TOKEN}}",
+     "description": "Bearer token for redis-rest.",
+     "required": false
+    },
+    "WS_RELAY_URL": {
+     "defaultValue": "http://${{ais-relay.RAILWAY_PRIVATE_DOMAIN}}:${{ais-relay.PORT}}",
+     "description": "Private URL of ais-relay (vessels, flights, Telegram, OREF, relay-backed market data). The template patches the API sidecar to trust this one private origin.",
+     "required": false
+    },
+    "RELAY_SHARED_SECRET": {
+     "defaultValue": "${{ais-relay.RELAY_SHARED_SECRET}}",
+     "description": "Shared secret sent as x-relay-key to ais-relay. References the value generated on ais-relay.",
+     "required": false
+    },
+    "WM_TRUSTED_PROXY_CIDRS": {
+     "defaultValue": "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7",
+     "description": "Private ranges whose X-Forwarded-For nginx trusts (the gateway), so per-IP limits count real clients. Only private ranges: public clients reach this service through the gateway.",
+     "required": false
+    },
+    "OPENROUTER_API_KEY": {
+     "defaultValue": "",
+     "description": "Optional. OpenRouter key (openrouter.ai, free models available): AI briefs and summaries, news threat classification on ais-relay, and the scheduled LLM seed jobs (insights, forecasts, regional briefs). Leave empty to keep server-side LLM calls off.",
+     "required": false
+    },
+    "OLLAMA_API_URL": {
+     "defaultValue": "",
+     "description": "Optional. Base URL of your own Ollama server for AI features without a cloud key, e.g. http://ollama.railway.internal:11434 (a private URL is trusted automatically).",
+     "required": false
+    },
+    "OLLAMA_MODEL": {
+     "defaultValue": "",
+     "description": "Optional. Ollama model name (upstream default llama3.1:8b).",
+     "required": false
+    },
+    "LLM_API_URL": {
+     "defaultValue": "",
+     "description": "Optional. Any OpenAI-compatible chat completions URL (used only together with LLM_API_KEY).",
+     "required": false
+    },
+    "LLM_API_KEY": {
+     "defaultValue": "",
+     "description": "Optional. API key for LLM_API_URL.",
+     "required": false
+    },
+    "LLM_MODEL": {
+     "defaultValue": "",
+     "description": "Optional. Model name for LLM_API_URL.",
+     "required": false
+    },
+    "AISSTREAM_API_KEY": {
+     "defaultValue": "",
+     "description": "Optional. aisstream.io key (free signup) for the live ship-tracking layer. The relay opens an outbound websocket; no inbound port is needed.",
+     "required": false
+    },
+    "FINNHUB_API_KEY": {
+     "defaultValue": "",
+     "description": "Optional. Finnhub key (free tier) for equity quotes, symbol search and the earnings calendar. Yahoo-based market data works without it.",
+     "required": false
+    },
+    "ALPHA_VANTAGE_API_KEY": {
+     "defaultValue": "",
+     "description": "Optional. Alpha Vantage key (free) used as an equity and commodity quote fallback.",
+     "required": false
+    },
+    "FRED_API_KEY": {
+     "defaultValue": "",
+     "description": "Optional. FRED key (free) for US macro series, rates and the economic calendar.",
+     "required": false
+    },
+    "EIA_API_KEY": {
+     "defaultValue": "",
+     "description": "Optional. EIA key (free) for US energy and electricity data.",
+     "required": false
+    },
+    "ACLED_EMAIL": {
+     "defaultValue": "",
+     "description": "Optional. ACLED account email (free for researchers) for conflict and protest events. Without it the conflict index uses GDELT.",
+     "required": false
+    },
+    "ACLED_PASSWORD": {
+     "defaultValue": "",
+     "description": "Optional. ACLED account password (OAuth; tokens refresh automatically).",
+     "required": false
+    },
+    "UCDP_ACCESS_TOKEN": {
+     "defaultValue": "",
+     "description": "Optional. UCDP API token for armed-conflict event data.",
+     "required": false
+    },
+    "NASA_FIRMS_API_KEY": {
+     "defaultValue": "",
+     "description": "Optional. NASA FIRMS key (free) for the wildfire / thermal hotspot layer.",
+     "required": false
+    },
+    "CLOUDFLARE_API_TOKEN": {
+     "defaultValue": "",
+     "description": "Optional. Cloudflare Radar token for internet outage data.",
+     "required": false
+    },
+    "AVIATIONSTACK_API": {
+     "defaultValue": "",
+     "description": "Optional. AviationStack key (free tier) for airport delays and flight data.",
+     "required": false
+    },
+    "OPENSKY_CLIENT_ID": {
+     "defaultValue": "",
+     "description": "Optional. OpenSky Network API client id (free account) for higher aircraft-tracking rate limits.",
+     "required": false
+    },
+    "OPENSKY_CLIENT_SECRET": {
+     "defaultValue": "",
+     "description": "Optional. OpenSky Network API client secret.",
+     "required": false
+    }
+   }
+  },
+  "ais-relay": {
+   "icon": "https://cdn.jsdelivr.net/gh/koala73/worldmonitor@v2.11.1/public/favico/android-chrome-512x512.png",
+   "source": {
+    "repo": "baranberkay96/worldmonitor-railway",
+    "rootDirectory": "/services/worker"
+   },
+   "startCommand": null,
+   "preDeployCommand": null,
+   "healthcheckPath": "/health",
+   "healthcheckTimeout": 300,
+   "restartPolicyType": "ALWAYS",
+   "numReplicas": 1,
+   "cronSchedule": null,
+   "publicDomain": false,
+   "targetPort": null,
+   "tcpProxy": null,
+   "volume": null,
+   "variables": {
+    "PORT": {
+     "defaultValue": "3004",
+     "description": "Relay listen port (Node, dual-stack). Railway health-checks PORT at /health.",
+     "required": false
+    },
+    "RELAY_SHARED_SECRET": {
+     "defaultValue": "${{secret(64, \"abcdef0123456789\")}}",
+     "description": "Required. Authenticates every non-public relay route (x-relay-key); the relay refuses to start without it. Generated; worldmonitor and seed-live reference it.",
+     "required": false
+    },
+    "UPSTASH_REDIS_REST_URL": {
+     "defaultValue": "http://${{redis-rest.RAILWAY_PRIVATE_DOMAIN}}:${{redis-rest.PORT}}",
+     "description": "redis-rest over the private network; the relay's in-process seed loops write here.",
+     "required": false
+    },
+    "UPSTASH_REDIS_REST_TOKEN": {
+     "defaultValue": "${{redis-rest.SRH_TOKEN}}",
+     "description": "Bearer token for redis-rest.",
+     "required": false
+    },
+    "UPSTASH_ALLOW_INSECURE_HTTP": {
+     "defaultValue": "true",
+     "description": "Lets the relay use the plain-http private redis-rest URL (upstream requires https otherwise and silently disables its seed loops).",
+     "required": false
+    },
+    "API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "This install's API, read by the news classify loop and (template patch) the cache warm-pings, instead of the hosted api.worldmonitor.app.",
+     "required": false
+    },
+    "WORLDMONITOR_RELAY_KEY": {
+     "defaultValue": "${{worldmonitor.WORLDMONITOR_RELAY_KEY}}",
+     "description": "Same relay secret as worldmonitor, sent as X-WorldMonitor-Key on warm-pings and the digest read.",
+     "required": false
+    },
+    "MARKET_YAHOO_REFRESH_INTERVAL_MS": {
+     "defaultValue": "900000",
+     "description": "Yahoo market refresh interval in ms (upstream compose default, 15 minutes).",
+     "required": false
+    },
+    "AISSTREAM_API_KEY": {
+     "defaultValue": "${{worldmonitor.AISSTREAM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FINNHUB_API_KEY": {
+     "defaultValue": "${{worldmonitor.FINNHUB_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "UCDP_ACCESS_TOKEN": {
+     "defaultValue": "${{worldmonitor.UCDP_ACCESS_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENROUTER_API_KEY": {
+     "defaultValue": "${{worldmonitor.OPENROUTER_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_API_URL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_MODEL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_ID": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_ID}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_SECRET": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_SECRET}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "TELEGRAM_API_ID": {
+     "defaultValue": "",
+     "description": "Optional. Telegram API id for the OSINT channel feed (needs TELEGRAM_API_HASH and a TELEGRAM_SESSION string, see upstream scripts/telegram).",
+     "required": false
+    },
+    "TELEGRAM_API_HASH": {
+     "defaultValue": "",
+     "description": "Optional. Telegram API hash.",
+     "required": false
+    },
+    "TELEGRAM_SESSION": {
+     "defaultValue": "",
+     "description": "Optional. Telegram session string. Run one relay replica only: two sessions in parallel get AUTH_KEY_DUPLICATED.",
+     "required": false
+    }
+   }
+  },
+  "redis-rest": {
+   "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/redis.svg",
+   "source": {
+    "repo": "baranberkay96/worldmonitor-railway",
+    "rootDirectory": "/services/redis-rest"
+   },
+   "startCommand": null,
+   "preDeployCommand": null,
+   "healthcheckPath": "/healthz",
+   "healthcheckTimeout": 600,
+   "restartPolicyType": "ALWAYS",
+   "numReplicas": 1,
+   "cronSchedule": null,
+   "publicDomain": false,
+   "targetPort": null,
+   "tcpProxy": null,
+   "volume": null,
+   "variables": {
+    "PORT": {
+     "defaultValue": "8079",
+     "description": "Listen port of the Upstash-compatible REST proxy (dual-stack). Railway health-checks /healthz on it.",
+     "required": false
+    },
+    "SRH_TOKEN": {
+     "defaultValue": "${{secret(64, \"abcdef0123456789\")}}",
+     "description": "Bearer token every caller must send. Generated; the other services reference it as UPSTASH_REDIS_REST_TOKEN.",
+     "required": false
+    },
+    "SRH_CONNECTION_STRING": {
+     "defaultValue": "${{Redis.REDIS_URL}}",
+     "description": "Private connection string of the Redis service (password auth).",
+     "required": false
+    }
+   }
+  },
+  "Redis": {
+   "icon": "https://cdn.sanity.io/images/sy1jschh/production/0ce0bfdcfbdbf69662b1116671f97c2dd788b655-157x157.svg",
+   "source": {
+    "image": "redis:8.2.10"
+   },
+   "startCommand": "/bin/sh -c \"rm -rf $RAILWAY_VOLUME_MOUNT_PATH/lost+found/ && exec docker-entrypoint.sh redis-server --requirepass $REDIS_PASSWORD --save 300 1 --dir $RAILWAY_VOLUME_MOUNT_PATH --maxmemory $REDIS_MAXMEMORY --maxmemory-policy allkeys-lru\"",
+   "preDeployCommand": null,
+   "healthcheckPath": null,
+   "healthcheckTimeout": null,
+   "restartPolicyType": "ON_FAILURE",
+   "restartPolicyMaxRetries": 10,
+   "numReplicas": 1,
+   "cronSchedule": null,
+   "publicDomain": false,
+   "targetPort": null,
+   "tcpProxy": null,
+   "volume": {
+    "mountPath": "/data"
+   },
+   "variables": {
+    "REDISHOST": {
+     "defaultValue": "${{RAILWAY_PRIVATE_DOMAIN}}",
+     "description": "Private network hostname of the Redis service, only resolvable from services in the same environment.",
+     "required": false
+    },
+    "REDISPORT": {
+     "defaultValue": "6379",
+     "description": "Port that Redis listens on.",
+     "required": false
+    },
+    "REDISUSER": {
+     "defaultValue": "default",
+     "description": "Username for authenticating with Redis.",
+     "required": false
+    },
+    "REDIS_PASSWORD": {
+     "defaultValue": "${{ secret(32, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\") }}",
+     "description": "Randomly generated password for authenticating with Redis.",
+     "required": false
+    },
+    "REDISPASSWORD": {
+     "defaultValue": "${{REDIS_PASSWORD}}",
+     "description": "Alias of REDIS_PASSWORD for clients that expect the unseparated name.",
+     "required": false
+    },
+    "REDIS_URL": {
+     "defaultValue": "redis://${{ REDISUSER }}:${{ REDIS_PASSWORD }}@${{ REDISHOST }}:${{ REDISPORT }}",
+     "description": "Connection string for connecting to Redis using the private network.",
+     "required": false
+    },
+    "REDIS_MAXMEMORY": {
+     "defaultValue": "512mb",
+     "description": "Memory cap with allkeys-lru eviction (upstream compose: 256mb). Raise it with the service memory if INFO shows evicted_keys.",
+     "required": false
+    }
+   }
+  },
+  "seed-live": {
+   "icon": "https://cdn.jsdelivr.net/gh/koala73/worldmonitor@v2.11.1/public/favico/android-chrome-512x512.png",
+   "source": {
+    "repo": "baranberkay96/worldmonitor-railway",
+    "rootDirectory": "/services/worker"
+   },
+   "startCommand": "/opt/railway/run-seeders.sh live",
+   "preDeployCommand": null,
+   "healthcheckPath": null,
+   "healthcheckTimeout": null,
+   "restartPolicyType": "NEVER",
+   "numReplicas": 1,
+   "cronSchedule": "*/10 * * * *",
+   "publicDomain": false,
+   "targetPort": null,
+   "tcpProxy": null,
+   "volume": null,
+   "variables": {
+    "UPSTASH_REDIS_REST_URL": {
+     "defaultValue": "http://${{redis-rest.RAILWAY_PRIVATE_DOMAIN}}:${{redis-rest.PORT}}",
+     "description": "redis-rest over the private network; seeders publish datasets here.",
+     "required": false
+    },
+    "UPSTASH_REDIS_REST_TOKEN": {
+     "defaultValue": "${{redis-rest.SRH_TOKEN}}",
+     "description": "Bearer token for redis-rest.",
+     "required": false
+    },
+    "API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "This install's API for seeders that read or warm it (insights, China signals, resilience scores).",
+     "required": false
+    },
+    "WM_API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "Same API base for the forecast seeder's chokepoint warm-ping.",
+     "required": false
+    },
+    "WORLDMONITOR_RELAY_KEY": {
+     "defaultValue": "${{worldmonitor.WORLDMONITOR_RELAY_KEY}}",
+     "description": "Relay secret for warm-pings and the news digest read.",
+     "required": false
+    },
+    "WS_RELAY_URL": {
+     "defaultValue": "http://${{ais-relay.RAILWAY_PRIVATE_DOMAIN}}:${{ais-relay.PORT}}",
+     "description": "Private relay URL (military CII reads vessels and AIS disruptions from it).",
+     "required": false
+    },
+    "RELAY_SHARED_SECRET": {
+     "defaultValue": "${{ais-relay.RELAY_SHARED_SECRET}}",
+     "description": "Relay secret (x-relay-key).",
+     "required": false
+    },
+    "OPENROUTER_API_KEY": {
+     "defaultValue": "${{worldmonitor.OPENROUTER_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_API_URL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_MODEL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_API_URL": {
+     "defaultValue": "${{worldmonitor.LLM_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_API_KEY": {
+     "defaultValue": "${{worldmonitor.LLM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_MODEL": {
+     "defaultValue": "${{worldmonitor.LLM_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "AISSTREAM_API_KEY": {
+     "defaultValue": "${{worldmonitor.AISSTREAM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FINNHUB_API_KEY": {
+     "defaultValue": "${{worldmonitor.FINNHUB_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ALPHA_VANTAGE_API_KEY": {
+     "defaultValue": "${{worldmonitor.ALPHA_VANTAGE_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FRED_API_KEY": {
+     "defaultValue": "${{worldmonitor.FRED_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "EIA_API_KEY": {
+     "defaultValue": "${{worldmonitor.EIA_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ACLED_EMAIL": {
+     "defaultValue": "${{worldmonitor.ACLED_EMAIL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ACLED_PASSWORD": {
+     "defaultValue": "${{worldmonitor.ACLED_PASSWORD}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "UCDP_ACCESS_TOKEN": {
+     "defaultValue": "${{worldmonitor.UCDP_ACCESS_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "NASA_FIRMS_API_KEY": {
+     "defaultValue": "${{worldmonitor.NASA_FIRMS_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "CLOUDFLARE_API_TOKEN": {
+     "defaultValue": "${{worldmonitor.CLOUDFLARE_API_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "AVIATIONSTACK_API": {
+     "defaultValue": "${{worldmonitor.AVIATIONSTACK_API}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_ID": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_ID}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_SECRET": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_SECRET}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "SEEDERS_EXTRA": {
+     "defaultValue": "",
+     "description": "Optional. Extra seeders for this tier, comma separated names from upstream scripts/seed-{name}.mjs.",
+     "required": false
+    },
+    "SEEDERS_SKIP": {
+     "defaultValue": "",
+     "description": "Optional. Seeders to leave out of this tier, comma separated.",
+     "required": false
+    }
+   }
+  },
+  "seed-hourly": {
+   "icon": "https://cdn.jsdelivr.net/gh/koala73/worldmonitor@v2.11.1/public/favico/android-chrome-512x512.png",
+   "source": {
+    "repo": "baranberkay96/worldmonitor-railway",
+    "rootDirectory": "/services/worker"
+   },
+   "startCommand": "/opt/railway/run-seeders.sh hourly",
+   "preDeployCommand": null,
+   "healthcheckPath": null,
+   "healthcheckTimeout": null,
+   "restartPolicyType": "NEVER",
+   "numReplicas": 1,
+   "cronSchedule": "5 * * * *",
+   "publicDomain": false,
+   "targetPort": null,
+   "tcpProxy": null,
+   "volume": null,
+   "variables": {
+    "UPSTASH_REDIS_REST_URL": {
+     "defaultValue": "http://${{redis-rest.RAILWAY_PRIVATE_DOMAIN}}:${{redis-rest.PORT}}",
+     "description": "redis-rest over the private network; seeders publish datasets here.",
+     "required": false
+    },
+    "UPSTASH_REDIS_REST_TOKEN": {
+     "defaultValue": "${{redis-rest.SRH_TOKEN}}",
+     "description": "Bearer token for redis-rest.",
+     "required": false
+    },
+    "API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "This install's API for seeders that read or warm it (insights, China signals, resilience scores).",
+     "required": false
+    },
+    "WM_API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "Same API base for the forecast seeder's chokepoint warm-ping.",
+     "required": false
+    },
+    "WORLDMONITOR_RELAY_KEY": {
+     "defaultValue": "${{worldmonitor.WORLDMONITOR_RELAY_KEY}}",
+     "description": "Relay secret for warm-pings and the news digest read.",
+     "required": false
+    },
+    "OPENROUTER_API_KEY": {
+     "defaultValue": "${{worldmonitor.OPENROUTER_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_API_URL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_MODEL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_API_URL": {
+     "defaultValue": "${{worldmonitor.LLM_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_API_KEY": {
+     "defaultValue": "${{worldmonitor.LLM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_MODEL": {
+     "defaultValue": "${{worldmonitor.LLM_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "AISSTREAM_API_KEY": {
+     "defaultValue": "${{worldmonitor.AISSTREAM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FINNHUB_API_KEY": {
+     "defaultValue": "${{worldmonitor.FINNHUB_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ALPHA_VANTAGE_API_KEY": {
+     "defaultValue": "${{worldmonitor.ALPHA_VANTAGE_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FRED_API_KEY": {
+     "defaultValue": "${{worldmonitor.FRED_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "EIA_API_KEY": {
+     "defaultValue": "${{worldmonitor.EIA_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ACLED_EMAIL": {
+     "defaultValue": "${{worldmonitor.ACLED_EMAIL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ACLED_PASSWORD": {
+     "defaultValue": "${{worldmonitor.ACLED_PASSWORD}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "UCDP_ACCESS_TOKEN": {
+     "defaultValue": "${{worldmonitor.UCDP_ACCESS_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "NASA_FIRMS_API_KEY": {
+     "defaultValue": "${{worldmonitor.NASA_FIRMS_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "CLOUDFLARE_API_TOKEN": {
+     "defaultValue": "${{worldmonitor.CLOUDFLARE_API_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "AVIATIONSTACK_API": {
+     "defaultValue": "${{worldmonitor.AVIATIONSTACK_API}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_ID": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_ID}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_SECRET": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_SECRET}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "SEEDERS_EXTRA": {
+     "defaultValue": "",
+     "description": "Optional. Extra seeders for this tier, comma separated names from upstream scripts/seed-{name}.mjs.",
+     "required": false
+    },
+    "SEEDERS_SKIP": {
+     "defaultValue": "",
+     "description": "Optional. Seeders to leave out of this tier, comma separated.",
+     "required": false
+    }
+   }
+  },
+  "seed-4h": {
+   "icon": "https://cdn.jsdelivr.net/gh/koala73/worldmonitor@v2.11.1/public/favico/android-chrome-512x512.png",
+   "source": {
+    "repo": "baranberkay96/worldmonitor-railway",
+    "rootDirectory": "/services/worker"
+   },
+   "startCommand": "/opt/railway/run-seeders.sh 4h",
+   "preDeployCommand": null,
+   "healthcheckPath": null,
+   "healthcheckTimeout": null,
+   "restartPolicyType": "NEVER",
+   "numReplicas": 1,
+   "cronSchedule": "15 */4 * * *",
+   "publicDomain": false,
+   "targetPort": null,
+   "tcpProxy": null,
+   "volume": null,
+   "variables": {
+    "UPSTASH_REDIS_REST_URL": {
+     "defaultValue": "http://${{redis-rest.RAILWAY_PRIVATE_DOMAIN}}:${{redis-rest.PORT}}",
+     "description": "redis-rest over the private network; seeders publish datasets here.",
+     "required": false
+    },
+    "UPSTASH_REDIS_REST_TOKEN": {
+     "defaultValue": "${{redis-rest.SRH_TOKEN}}",
+     "description": "Bearer token for redis-rest.",
+     "required": false
+    },
+    "API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "This install's API for seeders that read or warm it (insights, China signals, resilience scores).",
+     "required": false
+    },
+    "WM_API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "Same API base for the forecast seeder's chokepoint warm-ping.",
+     "required": false
+    },
+    "WORLDMONITOR_RELAY_KEY": {
+     "defaultValue": "${{worldmonitor.WORLDMONITOR_RELAY_KEY}}",
+     "description": "Relay secret for warm-pings and the news digest read.",
+     "required": false
+    },
+    "OPENROUTER_API_KEY": {
+     "defaultValue": "${{worldmonitor.OPENROUTER_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_API_URL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_MODEL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_API_URL": {
+     "defaultValue": "${{worldmonitor.LLM_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_API_KEY": {
+     "defaultValue": "${{worldmonitor.LLM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_MODEL": {
+     "defaultValue": "${{worldmonitor.LLM_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "AISSTREAM_API_KEY": {
+     "defaultValue": "${{worldmonitor.AISSTREAM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FINNHUB_API_KEY": {
+     "defaultValue": "${{worldmonitor.FINNHUB_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ALPHA_VANTAGE_API_KEY": {
+     "defaultValue": "${{worldmonitor.ALPHA_VANTAGE_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FRED_API_KEY": {
+     "defaultValue": "${{worldmonitor.FRED_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "EIA_API_KEY": {
+     "defaultValue": "${{worldmonitor.EIA_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ACLED_EMAIL": {
+     "defaultValue": "${{worldmonitor.ACLED_EMAIL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ACLED_PASSWORD": {
+     "defaultValue": "${{worldmonitor.ACLED_PASSWORD}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "UCDP_ACCESS_TOKEN": {
+     "defaultValue": "${{worldmonitor.UCDP_ACCESS_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "NASA_FIRMS_API_KEY": {
+     "defaultValue": "${{worldmonitor.NASA_FIRMS_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "CLOUDFLARE_API_TOKEN": {
+     "defaultValue": "${{worldmonitor.CLOUDFLARE_API_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "AVIATIONSTACK_API": {
+     "defaultValue": "${{worldmonitor.AVIATIONSTACK_API}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_ID": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_ID}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_SECRET": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_SECRET}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "SEEDERS_EXTRA": {
+     "defaultValue": "",
+     "description": "Optional. Extra seeders for this tier, comma separated names from upstream scripts/seed-{name}.mjs.",
+     "required": false
+    },
+    "SEEDERS_SKIP": {
+     "defaultValue": "",
+     "description": "Optional. Seeders to leave out of this tier, comma separated.",
+     "required": false
+    }
+   }
+  },
+  "seed-daily": {
+   "icon": "https://cdn.jsdelivr.net/gh/koala73/worldmonitor@v2.11.1/public/favico/android-chrome-512x512.png",
+   "source": {
+    "repo": "baranberkay96/worldmonitor-railway",
+    "rootDirectory": "/services/worker"
+   },
+   "startCommand": "/opt/railway/run-seeders.sh daily",
+   "preDeployCommand": null,
+   "healthcheckPath": null,
+   "healthcheckTimeout": null,
+   "restartPolicyType": "NEVER",
+   "numReplicas": 1,
+   "cronSchedule": "30 3 * * *",
+   "publicDomain": false,
+   "targetPort": null,
+   "tcpProxy": null,
+   "volume": null,
+   "variables": {
+    "UPSTASH_REDIS_REST_URL": {
+     "defaultValue": "http://${{redis-rest.RAILWAY_PRIVATE_DOMAIN}}:${{redis-rest.PORT}}",
+     "description": "redis-rest over the private network; seeders publish datasets here.",
+     "required": false
+    },
+    "UPSTASH_REDIS_REST_TOKEN": {
+     "defaultValue": "${{redis-rest.SRH_TOKEN}}",
+     "description": "Bearer token for redis-rest.",
+     "required": false
+    },
+    "API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "This install's API for seeders that read or warm it (insights, China signals, resilience scores).",
+     "required": false
+    },
+    "WM_API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "Same API base for the forecast seeder's chokepoint warm-ping.",
+     "required": false
+    },
+    "WORLDMONITOR_RELAY_KEY": {
+     "defaultValue": "${{worldmonitor.WORLDMONITOR_RELAY_KEY}}",
+     "description": "Relay secret for warm-pings and the news digest read.",
+     "required": false
+    },
+    "OPENROUTER_API_KEY": {
+     "defaultValue": "${{worldmonitor.OPENROUTER_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_API_URL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_MODEL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_API_URL": {
+     "defaultValue": "${{worldmonitor.LLM_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_API_KEY": {
+     "defaultValue": "${{worldmonitor.LLM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_MODEL": {
+     "defaultValue": "${{worldmonitor.LLM_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "AISSTREAM_API_KEY": {
+     "defaultValue": "${{worldmonitor.AISSTREAM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FINNHUB_API_KEY": {
+     "defaultValue": "${{worldmonitor.FINNHUB_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ALPHA_VANTAGE_API_KEY": {
+     "defaultValue": "${{worldmonitor.ALPHA_VANTAGE_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FRED_API_KEY": {
+     "defaultValue": "${{worldmonitor.FRED_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "EIA_API_KEY": {
+     "defaultValue": "${{worldmonitor.EIA_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ACLED_EMAIL": {
+     "defaultValue": "${{worldmonitor.ACLED_EMAIL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ACLED_PASSWORD": {
+     "defaultValue": "${{worldmonitor.ACLED_PASSWORD}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "UCDP_ACCESS_TOKEN": {
+     "defaultValue": "${{worldmonitor.UCDP_ACCESS_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "NASA_FIRMS_API_KEY": {
+     "defaultValue": "${{worldmonitor.NASA_FIRMS_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "CLOUDFLARE_API_TOKEN": {
+     "defaultValue": "${{worldmonitor.CLOUDFLARE_API_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "AVIATIONSTACK_API": {
+     "defaultValue": "${{worldmonitor.AVIATIONSTACK_API}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_ID": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_ID}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_SECRET": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_SECRET}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "SEEDERS_EXTRA": {
+     "defaultValue": "",
+     "description": "Optional. Extra seeders for this tier, comma separated names from upstream scripts/seed-{name}.mjs.",
+     "required": false
+    },
+    "SEEDERS_SKIP": {
+     "defaultValue": "",
+     "description": "Optional. Seeders to leave out of this tier, comma separated.",
+     "required": false
+    }
+   }
+  },
+  "seed-bundles": {
+   "icon": "https://cdn.jsdelivr.net/gh/koala73/worldmonitor@v2.11.1/public/favico/android-chrome-512x512.png",
+   "source": {
+    "repo": "baranberkay96/worldmonitor-railway",
+    "rootDirectory": "/services/worker"
+   },
+   "startCommand": "/opt/railway/run-seeders.sh bundles",
+   "preDeployCommand": null,
+   "healthcheckPath": null,
+   "healthcheckTimeout": null,
+   "restartPolicyType": "NEVER",
+   "numReplicas": 1,
+   "cronSchedule": "*/15 * * * *",
+   "publicDomain": false,
+   "targetPort": null,
+   "tcpProxy": null,
+   "volume": null,
+   "variables": {
+    "UPSTASH_REDIS_REST_URL": {
+     "defaultValue": "http://${{redis-rest.RAILWAY_PRIVATE_DOMAIN}}:${{redis-rest.PORT}}",
+     "description": "redis-rest over the private network; seeders publish datasets here.",
+     "required": false
+    },
+    "UPSTASH_REDIS_REST_TOKEN": {
+     "defaultValue": "${{redis-rest.SRH_TOKEN}}",
+     "description": "Bearer token for redis-rest.",
+     "required": false
+    },
+    "API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "This install's API for seeders that read or warm it (insights, China signals, resilience scores).",
+     "required": false
+    },
+    "WM_API_BASE_URL": {
+     "defaultValue": "http://${{worldmonitor.RAILWAY_PRIVATE_DOMAIN}}:${{worldmonitor.PORT}}",
+     "description": "Same API base for the forecast seeder's chokepoint warm-ping.",
+     "required": false
+    },
+    "WORLDMONITOR_RELAY_KEY": {
+     "defaultValue": "${{worldmonitor.WORLDMONITOR_RELAY_KEY}}",
+     "description": "Relay secret for warm-pings and the news digest read.",
+     "required": false
+    },
+    "WORLDMONITOR_VALID_KEYS": {
+     "defaultValue": "${{worldmonitor.WORLDMONITOR_VALID_KEYS}}",
+     "description": "Operator key; the resilience scores seeder reads premium routes on this install with the first key.",
+     "required": false
+    },
+    "WORLDMONITOR_SEED_REFRESH_KEY": {
+     "defaultValue": "${{worldmonitor.WORLDMONITOR_SEED_REFRESH_KEY}}",
+     "description": "Lets the resilience seeder force the ranking recompute.",
+     "required": false
+    },
+    "OPENROUTER_API_KEY": {
+     "defaultValue": "${{worldmonitor.OPENROUTER_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_API_URL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OLLAMA_MODEL": {
+     "defaultValue": "${{worldmonitor.OLLAMA_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_API_URL": {
+     "defaultValue": "${{worldmonitor.LLM_API_URL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_API_KEY": {
+     "defaultValue": "${{worldmonitor.LLM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "LLM_MODEL": {
+     "defaultValue": "${{worldmonitor.LLM_MODEL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "AISSTREAM_API_KEY": {
+     "defaultValue": "${{worldmonitor.AISSTREAM_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FINNHUB_API_KEY": {
+     "defaultValue": "${{worldmonitor.FINNHUB_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ALPHA_VANTAGE_API_KEY": {
+     "defaultValue": "${{worldmonitor.ALPHA_VANTAGE_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "FRED_API_KEY": {
+     "defaultValue": "${{worldmonitor.FRED_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "EIA_API_KEY": {
+     "defaultValue": "${{worldmonitor.EIA_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ACLED_EMAIL": {
+     "defaultValue": "${{worldmonitor.ACLED_EMAIL}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "ACLED_PASSWORD": {
+     "defaultValue": "${{worldmonitor.ACLED_PASSWORD}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "UCDP_ACCESS_TOKEN": {
+     "defaultValue": "${{worldmonitor.UCDP_ACCESS_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "NASA_FIRMS_API_KEY": {
+     "defaultValue": "${{worldmonitor.NASA_FIRMS_API_KEY}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "CLOUDFLARE_API_TOKEN": {
+     "defaultValue": "${{worldmonitor.CLOUDFLARE_API_TOKEN}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "AVIATIONSTACK_API": {
+     "defaultValue": "${{worldmonitor.AVIATIONSTACK_API}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_ID": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_ID}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "OPENSKY_CLIENT_SECRET": {
+     "defaultValue": "${{worldmonitor.OPENSKY_CLIENT_SECRET}}",
+     "description": "From worldmonitor (set keys there, then deploy the staged changes).",
+     "required": false
+    },
+    "SEEDERS_EXTRA": {
+     "defaultValue": "",
+     "description": "Optional. Extra seeders for this tier, comma separated names from upstream scripts/seed-{name}.mjs.",
+     "required": false
+    },
+    "SEEDERS_SKIP": {
+     "defaultValue": "",
+     "description": "Optional. Seeders to leave out of this tier, comma separated.",
+     "required": false
+    }
+   }
+  }
+ },
+ "buckets": []
+}
