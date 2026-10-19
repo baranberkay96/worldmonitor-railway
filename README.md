@@ -42,8 +42,10 @@ Self-hosting World Monitor means more than serving the web app. The dashboard re
 
 1. Wait for all builds. The worldmonitor image compiles the whole dashboard and takes the longest.
 2. Open the gateway variables and copy `WM_UI_PASSWORD`. The user name is `admin` (`WM_UI_USERNAME`).
-3. Open `https://{your-domain}` and sign in. Panels fill as the first cron ticks finish; the 15-minute bundles take a few ticks to cover everything on a new install.
+3. Open `https://{your-domain}` and sign in. Panels fill as the first cron ticks finish: fast feeds within minutes, most of the rest within the first hour or two. The 4-hour and daily jobs tick hourly and skip whatever is still fresh, so a new install does not wait for tomorrow's run.
 4. Optional: add keys on the **worldmonitor** service (for example `AISSTREAM_API_KEY`, `OPENROUTER_API_KEY`) and deploy the staged changes. The relay and seed services reference those variables.
+
+**How the dashboard calls its API:** the browser needs no API key. It mints an anonymous session at `/api/wm-session` (an HttpOnly cookie signed with `WM_SESSION_SECRET`), exactly as upstream's self-hosted image does. A plain `curl` of an API route without that session returns 401 by design; scripts should use the operator key below.
 
 **MCP for agents:** send `X-WorldMonitor-Key: {WORLDMONITOR_VALID_KEYS}` to `https://{your-domain}/api/mcp`. This path skips the login prompt because World Monitor itself rejects MCP calls without a valid key.
 

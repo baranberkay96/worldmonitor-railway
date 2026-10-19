@@ -85,6 +85,7 @@ All patches are small Node scripts in `services/*/patches/` that replace one exa
 - **Login:** HTTP basic auth on everything except `/gateway-health` and `/api/mcp`. The password is generated (`secret(24)`, 56-character alphabet) and bcrypt-hashed inside the container at start; Caddy caches verified hashes, so a page load does not pay bcrypt per request. The gateway strips the `Authorization` header before proxying.
 - **MCP** (`/api/mcp`) skips the login prompt because MCP clients cannot answer a basic-auth challenge. Upstream rejects any MCP request without a valid `X-WorldMonitor-Key` (checked against `WORLDMONITOR_VALID_KEYS`, timing-safe); OAuth needs the hosted identity service and fails closed here.
 - **Admin routes:** upstream forces `LOCAL_API_MODE=docker` in its entrypoint; `/api/local-*` (configuration updates, secret validation, debug) returns 403 at nginx and in the sidecar. Configuration is changed only through Railway variables. The relay refuses to start without `RELAY_SHARED_SECRET`; redis-rest refuses requests without `SRH_TOKEN` and only forwards an allowlist of Redis commands.
+- **How the dashboard authenticates its own `/api` calls** (upstream design, `api/_api-key.js`, `api/wm-session.js`, `src/services/wm-session.ts`): the browser holds **no API key**. On load it calls `POST /api/wm-session`, which mints a 12-hour anonymous `wms_` token signed with `WM_SESSION_SECRET` and sets it as an HttpOnly `wm-session` cookie; a fetch interceptor then sends the cookie (and the token as `X-WorldMonitor-Key`) on every same-origin `/api/` call. Public bootstrap tiers (`/api/bootstrap?tier=fast&public=1`, `…tier=slow&public=1`) need no credential at all. Origin, Referer and Sec-Fetch headers are deliberately not trusted (upstream #3541), so a bare `curl` of `/api/bootstrap` or `/api/news/v1/list-feed-digest` answers 401 `API key required`; that is expected and not a template fault. The gateway does **not** inject the operator key: `WORLDMONITOR_VALID_KEYS` is an enterprise credential that bypasses entitlement checks, lifts the anonymous 50-per-IP-per-day LLM cap to the operator ceiling (5,000 direct LLM calls a day) and puts every user into one per-key rate budget. The anonymous session is upstream's supported self-host path. Server-side requirements for it, all met here: `WM_SESSION_SECRET` (≥ 32 chars), Redis reachable for the session rate limiter (`failClosed`), `NODE_ENV` not `production` (nginx rewrites `Origin` to `http://localhost`), HTTPS for the `Secure` cookie (Railway's edge).
 - **`WM_PUBLIC_DASHBOARD=true`** removes the login. Upstream's per-IP caps then still apply, but anyone with the URL can spend the configured keys' quotas.
 - **Spending keys:** setting `OPENROUTER_API_KEY` (or another LLM) also turns on scheduled LLM seed jobs (insights hourly, forecasts every 4 h, forecast resolutions daily, regional briefs weekly) and the relay's news classification. Clear the reference on the seed services to keep LLM spend to interactive use.
 
@@ -153,15 +154,17 @@ All patches are small Node scripts in `services/*/patches/` that replace one exa
 
 ## Seed schedule
 
-`run-seeders.sh` waits up to 5 minutes for redis-rest (`/ping` with the token), runs the tier list with GNU `timeout` per seeder and a small parallel pool, prints one line per seeder (OK, FAIL with the last log line, TIMEOUT, SKIP) and exits 0 unless nothing succeeded. Extra variables: `SEEDERS` (replace list), `SEEDERS_EXTRA`, `SEEDERS_SKIP`, `SEED_TIMEOUT`, `SEED_PARALLEL`, `SEED_ROTATE`, `SEED_VERBOSE`. Railway skips a tick while the previous run is still going, so a slow first run cannot pile up.
+`run-seeders.sh` waits up to 5 minutes for redis-rest (`/ping` with the token), runs the tier list with GNU `timeout` per seeder and a small parallel pool, prints one line per seeder (OK, FAIL with the last log line, TIMEOUT, SKIP, FRESH, DEFER) and exits 0 unless nothing succeeded. Extra variables: `SEEDERS` (replace list), `SEEDERS_EXTRA`, `SEEDERS_SKIP`, `SEED_TIMEOUT`, `SEED_PARALLEL`, `SEED_ROTATE`, `SEED_VERBOSE`, `SEED_MIN_INTERVAL`, `SEED_RETRY_INTERVAL`. Railway skips a tick while the previous run is still going, so a slow first run cannot pile up.
+
+**Fast first fill.** seed-4h and seed-daily tick **hourly** and keep a per-seeder gate in Redis (`railway-template:seed-gate:v1:{name}`, set through redis-rest): after a success the seeder is skipped for 3 h 50 min (4h tier) or 23 h 50 min (daily tier), after a failure or timeout it is retried after 1 h or 6 h. Each seeder still runs at its own cadence, but a new install gets every tier's data in its first hour instead of waiting up to 4 hours or until 03:30 UTC. Losing a gate (Redis eviction, flush) only makes that seeder run one tick early. `SEED_MIN_INTERVAL=0` turns the gate off.
 
 | Service | Cron (UTC) | Pool / cap | Seeders (`scripts/seed-{name}.mjs`) |
 |---|---|---|---|
 | seed-live | `*/10 * * * *` | 3 / 300 s | earthquakes, gdelt-bulk-materializer, conflict-intel, military-flights, military-cii, commodity-quotes, radiation-watch, imd-cyclone-marine, fire-detections, economy |
 | seed-hourly | `5 * * * *` | 2 / 900 s | unrest-events, thermal-escalation, prediction-markets, research, security-advisories, regulatory-actions, cyber-threats, aviation, internet-outages, fred-rates, insights |
-| seed-4h | `15 */4 * * *` | 2 / 1500 s | supply-chain-trade, sanctions-pressure, forecasts, fx-rates, fx-yoy, fear-greed, hormuz, energy-intelligence, earnings-calendar, economic-calendar, webcams |
-| seed-daily | `30 3 * * *` | 2 / 2400 s | aaii-sentiment, cot, market-breadth, trade-flows, comtrade-bilateral-hs4, hs2-chokepoint-exposure, energy-spine, electricity-prices, ember-electricity, fuel-prices, bigmac, grocery-basket, forecast-bets, forecast-resolutions, bundle-regional |
-| seed-bundles | `*/15 * * * *` | 1 / 2400 s, start position rotates each tick | bundle-derived-signals, -market-backup, -canada, -climate, -portwatch, -portwatch-port-activity, -relay-backup, -energy-sources, -health, -ecb-eu, -imf-extended, -macro, -yield-curves, -resilience, -resilience-energy-v2, -resilience-recovery, -static-ref, -static-ref-heavy |
+| seed-4h | `15 * * * *`, gated 3 h 50 min (retry 1 h) | 2 / 1500 s | supply-chain-trade, sanctions-pressure, forecasts, fx-rates, fx-yoy, fear-greed, hormuz, energy-intelligence, earnings-calendar, economic-calendar, webcams |
+| seed-daily | `35 * * * *`, gated 23 h 50 min (retry 6 h) | 2 / 2400 s | aaii-sentiment, cot, market-breadth, trade-flows, comtrade-bilateral-hs4, hs2-chokepoint-exposure, energy-spine, electricity-prices, ember-electricity, fuel-prices, bigmac, grocery-basket, forecast-bets, forecast-resolutions, bundle-regional |
+| seed-bundles | `*/15 * * * *` | 3 / 2400 s, start position rotates each tick (upstream runs every bundle as its own concurrent service) | bundle-derived-signals, -market-backup, -canada, -climate, -portwatch, -portwatch-port-activity, -relay-backup, -energy-sources, -health, -ecb-eu, -imf-extended, -macro, -yield-curves, -resilience, -resilience-energy-v2, -resilience-recovery, -static-ref, -static-ref-heavy |
 
 Cadences follow the data's cache TTL in each script and upstream's production cron where it is recorded. Bundles check Redis freshness per section, so most bundle ticks only run what is due.
 
@@ -179,6 +182,19 @@ Cadences follow the data's cache TTL in each script and upstream's production cr
 | yield-curves-shared | Library, not a seeder. |
 
 Seeders whose key is not set fail fast or skip; the runner shows that as FAIL with the seeder's own last log line, which normally names the missing key.
+
+## Health check expectations
+
+`/api/health?compact=1` (behind the login) reports about 326 checks; the compact body lists each failing check under `problems` (and soft ones under `pending`) with its status. `_reports/round4/66-worldmonitor-health-map.tsv` maps the 309 registry checks in `api/health.js` to the template service that produces their data and the credential variables the producer reads:
+
+| Category (309 registry checks) | Count | Expected status |
+|---|---|---|
+| On-demand (computed when a panel or API route asks) | 57 | `onDemandWarn`, never crit |
+| Produced by a template service, no credential read (incl. 19 bundle checks with dynamic key names, and service statuses via the patched relay warm-ping) | 151 | crit only until the first tick that runs them, then OK |
+| Produced by a template service whose script reads a credential | 89 | many fill without the key (keys are often optional fallbacks); the rest stay crit until the key is set (for example the FRED-only economic stress index, NASA FIRMS fires, Cloudflare outages, cross-strait via `PROXY_URL`) |
+| Produced only by hosted upstream services | 12 | stay crit: consumer prices (6), company-monitoring worker, shipping-webhook worker, digest notifications, news recall benchmark, cross-strait history backfill, Canada alerts aggregate (its members are seeded) |
+
+So right after a deploy most checks are crit because nothing has been seeded yet; that number should fall tick by tick. Wiring faults show up differently: a seeder that fails on every key-free run with an HTTP 401/403/5xx from `redis-rest` or from this install's API, or relay log lines such as `Redis disabled`, `SSRF blocked`, or warm-ping `HTTP 401`.
 
 ## Data sources and API keys
 
@@ -207,12 +223,13 @@ Groq is no longer a provider in v2.11.1 (only tests mention `GROQ_API_KEY`), so 
 5. **Seeders as Railway cron services** on upstream's production cadences: 46 standalone seeders and 19 freshness-gated bundles (137 sections), instead of one long-running loop that runs a fixed keyless subset every 30 minutes.
 6. **Healthchecks everywhere a service listens:** gateway, app (nginx + sidecar), relay and redis-rest (new `/healthz`). PORT set on each (Rule 8.1).
 7. **Dual-stack listeners** for the app (nginx) and redis-rest (Rule 8.14); relay already dual-stack.
-8. **Real client IPs** reach upstream's per-IP limits through trusted proxy ranges (market: every visitor shares the gateway's IP and one LLM budget).
-9. **MCP usable** behind the login: `/api/mcp` bypasses basic auth and relies on upstream's key check.
-10. **Current LLM options:** OpenRouter, Ollama and generic OpenAI-compatible, matching v2.11.1 (`GROQ_API_KEY` removed).
-11. **Resilience scores work:** operator and seed-refresh keys reach the resilience seeder.
-12. **Restart policy ALWAYS** on services that depend on others (Rule 8.5), no `restartPolicyMaxRetries` with ALWAYS.
-13. **Site variant selectable** at build time (`VITE_VARIANT`).
+8. **First fill within the hour.** The 4-hour and daily tiers tick hourly behind Redis gates and bundles run three at a time, so a new install does not wait until 03:30 UTC for daily data.
+9. **Real client IPs** reach upstream's per-IP limits through trusted proxy ranges (market: every visitor shares the gateway's IP and one LLM budget).
+10. **MCP usable** behind the login: `/api/mcp` bypasses basic auth and relies on upstream's key check.
+11. **Current LLM options:** OpenRouter, Ollama and generic OpenAI-compatible, matching v2.11.1 (`GROQ_API_KEY` removed).
+12. **Resilience scores work:** operator and seed-refresh keys reach the resilience seeder.
+13. **Restart policy ALWAYS** on services that depend on others (Rule 8.5), no `restartPolicyMaxRetries` with ALWAYS.
+14. **Site variant selectable** at build time (`VITE_VARIANT`).
 
 ## Scaling
 
@@ -249,6 +266,9 @@ Prices: RAM $10/GB-month, vCPU $20/vCPU-month, volume $0.15/GB-month. Cron servi
 - All four patch scripts applied to copies of the v2.11.1 files; diffs reviewed; `node --check` passes on every patched file; a second run fails with "already patched".
 - `sh -n` and `dash -n` on all four shell scripts.
 - `run-seeders.sh` exercised with dash against fake seed scripts and a fake redis-rest: OK / FAIL / TIMEOUT / SKIP classification, de-duplication, `SEEDERS`, `SEEDERS_SKIP`, parallel pool, verbose mode, exit 1 when nothing works, giving up when `/ping` fails, rejecting a non-numeric `SEED_TIMEOUT`, rotation arithmetic.
+- Seed gates (after deploy test 2): `run-seeders.sh` run with dash against a fake redis-rest that implements `GET` and `SET … EX`: first tick runs and stores `ok:`/`fail:` gates with the tier TTLs (13800/3600 s for 4h, 85800/21600 s for daily), the next tick reports FRESH/DEFER and runs nothing, `SEED_MIN_INTERVAL=0` disables the gate, a non-numeric value is rejected, the live tier has no gate.
+- Browser auth path read in v2.11.1 source: `api/_api-key.js` (session, enterprise and user-key kinds), `api/wm-session.js` (mint, cookie, `failClosed` rate limit), `api/bootstrap.js` + `api/_bootstrap-public-tier.js` (credential-free public tiers), `src/services/wm-session.ts` (interceptor matches relative `/api/` paths), `api/_cors.js` (`http://localhost` allowed unless `NODE_ENV=production`), `server/gateway.ts` (enterprise keys skip entitlements, one budget per key).
+- Health checks: the 309 registry checks in `api/health.js` mapped to producers (`_reports/round4/66-worldmonitor-health-map.tsv`); the 57 on-demand checks match the `onDemandWarn` count of deploy test 2.
 - Gateway entrypoint exercised with a mock `caddy`: login file, public mode, short password, invalid user name, missing upstream.
 - Every tier name exists as `scripts/seed-{name}.mjs` at v2.11.1; each of the 219 seed scripts is in a tier, a bundle, or the "left out" table.
 - Static import walk of all seed scripts: bare packages are all in `scripts/package.json`; no `.ts` file is reached statically.
@@ -262,13 +282,19 @@ Prices: RAM $10/GB-month, vCPU $20/vCPU-month, volume $0.15/GB-month. Cron servi
 2. Health: gateway `/gateway-health` 200; worldmonitor `/api/sidecar-health` 200; ais-relay `/health` 200; redis-rest `/healthz` 200.
 3. Logs: worldmonitor shows `[patch]` lines in the build and `nginx: listening on 0.0.0.0:8080 and [::]:8080` at start; ais-relay shows `WORLDMONITOR_RELAY_KEY configured` and no `Redis disabled` warning; redis-rest shows `listening on :::8079`.
 4. Login: open `https://{your-domain}` → browser login prompt → `admin` / `WM_UI_PASSWORD` from the gateway variables → dashboard loads. A wrong password gets 401.
-5. Data: after the first seed-live and seed-bundles ticks, `curl -u admin:{password} https://{your-domain}/api/health` shows a rising OK count; earthquakes, news and markets panels fill.
-6. Relay path (the patch): `/api/health` or the sidecar log shows no `SSRF blocked … ais-relay` lines; with `AISSTREAM_API_KEY` set on worldmonitor and ais-relay redeployed, vessels appear.
-7. Warm-pings: ais-relay log shows `[CII] Warm-ping` / `[ServiceStatuses] Seed ping OK` against this install, and the `[Classify]` digest read is not a 401.
-8. Cron: each seed service shows a `done in …: ok=…` summary; seed-bundles rotates its start position.
-9. MCP: `POST https://{your-domain}/api/mcp` with `X-WorldMonitor-Key: {WORLDMONITOR_VALID_KEYS}` and a `tools/list` body works without basic auth; without the key it is refused.
-10. Persistence: redeploy Redis; data survives (volume `/data`).
-11. Real IP: worldmonitor nginx access log shows client IPs, not the gateway's private address.
+5. Data as the browser gets it (anonymous session, no key):
+   - `curl -su admin:{password} "https://{your-domain}/api/bootstrap?tier=fast&public=1"` → 200 with data (public tier, no session needed).
+   - `curl -su admin:{password} -c jar -X POST -H 'Content-Type: application/json' -d '{}' https://{your-domain}/api/wm-session` → 200 `{"ok":true,"token":"wms_…"}` and a `wm-session` cookie.
+   - `curl -su admin:{password} -b jar "https://{your-domain}/api/news/v1/list-feed-digest?variant=full&lang=en"` → 200.
+   - Without the cookie the last call is 401 `API key required`, by upstream design.
+   - In a browser, DevTools shows `POST /api/wm-session` 200 followed by 200s on `/api/*`.
+6. Health: `curl -su admin:{password} "https://{your-domain}/api/health?compact=1" | jq -r '.problems | to_entries[] | "\(.key)\t\(.value.status)"'` lists failing checks; join them with the health map (see "Health check expectations"). The crit count falls over the first one to two hours; the detailed report needs `-H "X-WorldMonitor-Key: {WORLDMONITOR_VALID_KEYS}"` on `/api/health`.
+7. Relay path (the patch): `/api/health` or the sidecar log shows no `SSRF blocked … ais-relay` lines; with `AISSTREAM_API_KEY` set on worldmonitor and ais-relay redeployed, vessels appear.
+8. Warm-pings: ais-relay log shows `[CII] Warm-ping` / `[ServiceStatuses] Seed ping OK` against this install, and the `[Classify]` digest read is not a 401.
+9. Cron: each seed service shows a `done in …: ok=…` summary; seed-bundles rotates its start position.
+10. MCP: `POST https://{your-domain}/api/mcp` with `X-WorldMonitor-Key: {WORLDMONITOR_VALID_KEYS}` and a `tools/list` body works without basic auth; without the key it is refused.
+11. Persistence: redeploy Redis; data survives (volume `/data`).
+12. Real IP: worldmonitor nginx access log shows client IPs, not the gateway's private address.
 
 ## Open questions
 
@@ -280,4 +306,5 @@ Prices: RAM $10/GB-month, vCPU $20/vCPU-month, volume $0.15/GB-month. Cron servi
 - **Upstream's comment that "Railway kills cron containers at 10 minutes"** (in `_bundle-runner.mjs`) contradicts Railway's docs (the next tick is skipped, the running one is not terminated). If a 10-minute limit applies, long first runs of seed-bundles and seed-daily would be cut and finish over several ticks (bundles keep completed sections; the rotation spreads the rest).
 - **Pruned folders in the worker image** (docs, public, src-tauri, cli, sdk, tests, …): a static search found no runtime reads; a seeder that did read one would fail on its own without affecting others.
 - **Redis size** under the full seeder fleet is unknown; watch `evicted_keys`.
+- **seed-bundles memory** with 3 bundles in parallel (each spawns Node child processes per section) is unmeasured; a 0.6–0.9 GB peak is plausible. Set `SEED_PARALLEL=1` on seed-bundles if it is tight.
 - **Alpine DNS:** the market template set `ENABLE_ALPINE_PRIVATE_NETWORKING=true` on its Alpine services. It is a legacy flag for musl resolvers on IPv6-only private networks and is not set here; if `*.railway.internal` names fail to resolve in the Node services, set it to `true` on them.
