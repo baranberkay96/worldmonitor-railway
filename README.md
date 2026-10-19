@@ -1,5 +1,7 @@
 # Deploy and Host World Monitor with Railway
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/world-monitor-v2-global-intelligence-das?referralCode=20H68q)
+
 World Monitor is an open-source global intelligence dashboard: live news, conflict and protest signals, markets, ships, aircraft, natural events and infrastructure on one interactive map. This community template runs the complete self-hosted stack from release v2.11.1 behind a login, with scheduled data jobs and no required API keys.
 
 ## About Hosting World Monitor
