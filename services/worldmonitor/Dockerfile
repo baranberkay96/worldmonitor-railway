@@ -22,6 +22,17 @@ ADD https://codeload.github.com/koala73/worldmonitor/tar.gz/${WM_SRC_COMMIT} /tm
 # Extract, check the version, then mirror upstream's .dockerignore so the build
 # sees the same tree as upstream's own `docker build .` (root-level patterns
 # only, as Docker applies them).
+#
+# One deliberate difference: tests/fixtures/ is kept. tsconfig.json type-checks
+# all of src/, and since upstream #9391 (2026-10-19) src/e2e/
+# country-qualified-signals-harness.ts imports
+# ../../tests/fixtures/qualified-country-signals. Upstream's .dockerignore drops
+# tests/, so `npx tsc` fails with TS2307 in upstream's own v2.11.1 image build
+# (the Docker publish run for v2.11.1 failed with that error). Upstream CI
+# type-checks a full checkout, where the fixture exists. The fixture is
+# type-checked only; it is not part of any Vite entry, so the dashboard output
+# is unchanged. The check below fails early if src/ imports a tests/ file that
+# is not kept.
 RUN set -eux; \
     mkdir -p /tmp/extract; \
     tar -xzf /tmp/worldmonitor.tar.gz -C /tmp/extract; \
@@ -29,9 +40,16 @@ RUN set -eux; \
     rm -rf /tmp/extract /tmp/worldmonitor.tar.gz; \
     grep -q "\"version\": \"${WM_SRC_VERSION}\"" /src/package.json; \
     cd /src; \
-    rm -rf .git .windsurf .agent .agents .claude .factory .planning e2e tests \
+    rm -rf .git .windsurf .agent .agents .claude .factory .planning e2e \
            docs/internal docs/Docs_To_Review dist node_modules secrets \
            src-tauri/target src-tauri/sidecar/node; \
+    if [ -d tests ]; then find tests -mindepth 1 -maxdepth 1 ! -name fixtures -exec rm -rf {} +; fi; \
+    missing=$(grep -rhoE "['\"](\.\./)+tests/[^'\"]+['\"]" src \
+      | sed -E "s/^['\"](\.\.\/)+//; s/['\"]\$//" | sort -u \
+      | while read -r p; do \
+          [ -e "$p" ] || [ -e "$p.ts" ] || [ -e "$p.js" ] || [ -e "$p.mjs" ] || [ -e "$p.json" ] || echo "$p"; \
+        done); \
+    if [ -n "$missing" ]; then echo "src/ imports test files that were pruned: $missing" >&2; exit 1; fi; \
     rm -f .npmrc docker-compose.override.yml; \
     find . -maxdepth 1 -type f -name '*.md' ! -name README.md ! -name CHANGELOG.md -exec rm -f {} +; \
     find . -maxdepth 1 \( -name '.env*' -o -name '*.log' -o -name '*.key' -o -name '*.pem' \) -exec rm -rf {} +; \
